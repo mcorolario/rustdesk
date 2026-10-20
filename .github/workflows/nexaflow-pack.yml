@@ -48,6 +48,10 @@ jobs:
           set -euo pipefail
           gh run download "${{ inputs.run_id }}" -R "${{ github.repository }}" -n rustdesk-unsigned-windows-x86_64 -D ./rustdesk
           test -f ./rustdesk/rustdesk.exe || { echo "rustdesk.exe not found in artifact"; exit 1; }
+          # Rename the inner exe so the packer's extraction directory is derived from
+          # "NexaFlow-Suporte" (app_dir_name uses the exe stem) instead of "rustdesk" —
+          # otherwise it collides with a machine that already has official RustDesk.
+          mv ./rustdesk/rustdesk.exe ./rustdesk/NexaFlow-Suporte.exe
           echo "Client folder restored ($(find ./rustdesk -type f | wc -l) files)"
 
       - name: Install Rust toolchain
@@ -63,7 +67,7 @@ jobs:
           sed -i '/dpiAware/d' res/manifest.xml
           pushd ./libs/portable
           pip3 install -r requirements.txt
-          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/NexaFlow-Suporte.exe
           popd
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe "./SignOutput/NexaFlow-Suporte.exe"

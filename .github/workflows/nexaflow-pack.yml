@@ -26,12 +26,19 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Apply NexaFlow icon to packer
+      - name: Apply NexaFlow branding to packer
         shell: bash
         run: |
           set -euo pipefail
           cp .github/nexaflow/icon.ico res/icon.ico
+          pc=libs/portable/Cargo.toml
+          sed -i 's#^ProductName = ".*"#ProductName = "NexaFlow Suporte"#' "$pc"
+          sed -i 's#^FileDescription = ".*"#FileDescription = "NexaFlow Suporte - Acesso Remoto"#' "$pc"
+          sed -i 's#^OriginalFilename = ".*"#OriginalFilename = "NexaFlow-Suporte.exe"#' "$pc"
+          sed -i 's#^LegalCopyright = ".*"#LegalCopyright = "Copyright (C) 2026 NexaFlow."#' "$pc"
+          sed -i 's#^description = ".*"#description = "NexaFlow Suporte - Acesso Remoto"#' "$pc"
           ls -l res/icon.ico
+          grep -nE '^(ProductName|FileDescription|OriginalFilename|LegalCopyright|description) =' "$pc"
 
       - name: Download built client folder
         shell: bash

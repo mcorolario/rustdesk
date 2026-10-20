@@ -1,0 +1,68 @@
+name: NexaFlow Suporte - Pack single exe
+
+# Takes the already-built portable folder from a previous
+# "NexaFlow Suporte - Windows x86_64" run and wraps it into a single
+# self-extracting NexaFlow-Suporte.exe (portable packer). Only compiles the
+# tiny packer stub, so it finishes in a few minutes (no rustdesk rebuild).
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id of the windows build whose artifact to pack"
+        required: true
+        type: string
+
+env:
+  RUST_VERSION: "1.75"
+  VERSION: "1.5.1"
+
+jobs:
+  pack:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Apply NexaFlow icon to packer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/nexaflow/icon.ico res/icon.ico
+          ls -l res/icon.ico
+
+      - name: Download built client folder
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ inputs.run_id }}" -R "${{ github.repository }}" -n rustdesk-unsigned-windows-x86_64 -D ./rustdesk
+          test -f ./rustdesk/rustdesk.exe || { echo "rustdesk.exe not found in artifact"; exit 1; }
+          echo "Client folder restored ($(find ./rustdesk -type f | wc -l) files)"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build self-extracted executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          mkdir -p ./SignOutput
+          mv ./target/release/rustdesk-portable-packer.exe "./SignOutput/NexaFlow-Suporte.exe"
+          ls -l ./SignOutput
+
+      - name: Upload NexaFlow single exe
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: NexaFlow-Suporte-exe
+          path: ./SignOutput/NexaFlow-Suporte.exe
+          if-no-files-found: error

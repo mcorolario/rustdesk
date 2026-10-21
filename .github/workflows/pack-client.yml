@@ -1,0 +1,98 @@
+name: Pack branded single exe
+
+# Wraps a built portable folder (from a "Build branded client" run) into a single
+# self-extracting <brand>.exe. Only compiles the small packer stub (a few minutes).
+
+on:
+  workflow_dispatch:
+    inputs:
+      brand:
+        description: "Which brand to pack"
+        required: true
+        type: choice
+        options:
+          - nexaflow
+          - neuroplay
+        default: nexaflow
+      run_id:
+        description: "Run id of the build whose client folder to pack"
+        required: true
+        type: string
+
+env:
+  RUST_VERSION: "1.75"
+  VERSION: "1.5.1"
+
+jobs:
+  pack:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Apply branding to packer
+        shell: bash
+        env:
+          BRAND: ${{ inputs.brand }}
+        run: |
+          set -euo pipefail
+          case "$BRAND" in
+            nexaflow)
+              PRODUCT="NexaFlow Suporte"; DESC="NexaFlow Suporte - Acesso Remoto"
+              COPYRIGHT="Copyright (C) 2026 NexaFlow."; EXE="NexaFlow-Suporte.exe" ;;
+            neuroplay)
+              PRODUCT="Suporte NeuroPlay"; DESC="Suporte NeuroPlay - Acesso Remoto"
+              COPYRIGHT="Copyright (C) 2026 NeuroPlay."; EXE="Suporte-NeuroPlay.exe" ;;
+            *) echo "Unknown brand: $BRAND"; exit 1 ;;
+          esac
+          echo "EXE=$EXE" >> "$GITHUB_ENV"
+          echo "PACK_BRAND=$BRAND" >> "$GITHUB_ENV"
+          cp ".github/brands/$BRAND/icon.ico" res/icon.ico
+          pc=libs/portable/Cargo.toml
+          sed -i "s#^ProductName = \".*\"#ProductName = \"${PRODUCT}\"#" "$pc"
+          sed -i "s#^FileDescription = \".*\"#FileDescription = \"${DESC}\"#" "$pc"
+          sed -i "s#^OriginalFilename = \".*\"#OriginalFilename = \"${EXE}\"#" "$pc"
+          sed -i "s#^LegalCopyright = \".*\"#LegalCopyright = \"${COPYRIGHT}\"#" "$pc"
+          sed -i "s#^description = \".*\"#description = \"${DESC}\"#" "$pc"
+          grep -nE '^(ProductName|FileDescription|OriginalFilename|LegalCopyright|description) =' "$pc"
+
+      - name: Download built client folder
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ inputs.run_id }}" -R "${{ github.repository }}" -n "client-unsigned-windows-x86_64-${{ inputs.brand }}" -D ./rustdesk
+          test -f ./rustdesk/rustdesk.exe || { echo "rustdesk.exe not found in artifact"; exit 1; }
+          # Rename inner exe so the packer's extraction dir is derived from the brand
+          # exe name (isolated) instead of "rustdesk" (collides with official RustDesk).
+          mv ./rustdesk/rustdesk.exe "./rustdesk/${EXE}"
+          echo "Client folder restored ($(find ./rustdesk -type f | wc -l) files), inner exe: ${EXE}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build self-extracted executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e "../../rustdesk/${EXE}"
+          popd
+          mkdir -p ./SignOutput
+          mv ./target/release/rustdesk-portable-packer.exe "./SignOutput/${EXE}"
+          ls -l ./SignOutput
+
+      - name: Upload branded single exe
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: client-exe-${{ inputs.brand }}
+          path: ./SignOutput/${{ env.EXE }}
+          if-no-files-found: error

@@ -1,13 +1,22 @@
-name: NexaFlow Suporte - Windows x86_64
+name: Build branded client - Windows x86_64
 
-# Standalone, manually-dispatched build that produces a fully NexaFlow-branded
-# Windows x86_64 flutter client (portable, unsigned) pointing at the self-hosted
-# rendezvous server. Branding (app name, icons, exe properties) and the embedded
-# server/public key are applied at build time so the committed tree only changes
-# under .github/** (keeping the heavy push-triggered CI quiet).
+# Standalone, manually-dispatched build of a fully branded Windows x86_64 flutter
+# client (portable, unsigned) pointing at the self-hosted rendezvous server.
+# Pick the brand via the `brand` input; per-brand name/icons/exe-properties are
+# applied at build time. All brand inputs live under .github/** so the heavy
+# push-triggered CI stays quiet.
 
 on:
   workflow_dispatch:
+    inputs:
+      brand:
+        description: "Which brand to build"
+        required: true
+        type: choice
+        options:
+          - nexaflow
+          - neuroplay
+        default: nexaflow
 
 env:
   SCITER_RUST_VERSION: "1.75"
@@ -21,9 +30,6 @@ env:
   VERSION: "1.5.1"
 
 jobs:
-  # Minimal flutter-rust-bridge generation (only the default 3.22.3 bridge that
-  # the x86_64 windows build consumes). Mirrors .github/workflows/bridge.yml's
-  # first matrix entry.
   generate-bridge:
     runs-on: ubuntu-22.04
     steps:
@@ -101,7 +107,6 @@ jobs:
             ./flutter/macos/Runner/bridge_generated.h
             ./flutter/ios/Runner/bridge_generated.h
 
-  # Builds the small WindowInjection.dll helper (top-most prompt window).
   build-topmost:
     uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
     with:
@@ -112,10 +117,8 @@ jobs:
       target_version: Windows10
 
   build-windows:
-    name: NexaFlow Windows x86_64
+    name: ${{ inputs.brand }} Windows x86_64
     needs: [generate-bridge, build-topmost]
-    # Build even if the (non-essential) top-most helper fails, as long as the
-    # bridge is available.
     if: ${{ always() && needs.generate-bridge.result == 'success' }}
     runs-on: windows-2022
     steps:
@@ -131,59 +134,86 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Apply NexaFlow branding and embed server
+      - name: Apply branding and embed server
         shell: bash
         env:
+          BRAND: ${{ inputs.brand }}
           RENDEZVOUS_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           RS_PUB_KEY: ${{ secrets.RS_PUB_KEY }}
         run: |
           set -euo pipefail
 
+          case "$BRAND" in
+            nexaflow)
+              APP_NAME="NexaFlow"
+              PRODUCT="NexaFlow Suporte"
+              DESC="NexaFlow Suporte - Acesso Remoto"
+              COMPANY="NexaFlow"
+              COPYRIGHT="Copyright (C) 2026 NexaFlow. Todos os direitos reservados."
+              EXE="NexaFlow-Suporte.exe"
+              ;;
+            neuroplay)
+              APP_NAME="SuporteNeuroPlay"
+              PRODUCT="Suporte NeuroPlay"
+              DESC="Suporte NeuroPlay - Acesso Remoto"
+              COMPANY="NeuroPlay"
+              COPYRIGHT="Copyright (C) 2026 NeuroPlay. Todos os direitos reservados."
+              EXE="Suporte-NeuroPlay.exe"
+              ;;
+            *)
+              echo "Unknown brand: $BRAND"; exit 1 ;;
+          esac
+          bd=".github/brands/$BRAND"
+          test -d "$bd" || { echo "brand dir $bd missing"; exit 1; }
+          echo "Building brand=$BRAND APP_NAME=$APP_NAME PRODUCT=$PRODUCT"
+
           echo "::group::Icons"
-          cp .github/nexaflow/icon.ico flutter/windows/runner/resources/app_icon.ico
-          cp .github/nexaflow/icon.ico res/icon.ico
-          cp .github/nexaflow/icon.ico res/tray-icon.ico
-          cp .github/nexaflow/icon.svg flutter/assets/icon.svg
-          ls -l flutter/windows/runner/resources/app_icon.ico res/icon.ico res/tray-icon.ico flutter/assets/icon.svg
+          cp "$bd/icon.ico" flutter/windows/runner/resources/app_icon.ico
+          cp "$bd/icon.ico" res/icon.ico
+          cp "$bd/icon.ico" res/tray-icon.ico
+          # In-app icon (loadIcon prefers assets/icon.png, falls back to assets/icon.svg)
+          if [ -f "$bd/icon.png" ]; then cp "$bd/icon.png" flutter/assets/icon.png; fi
+          if [ -f "$bd/icon.svg" ]; then cp "$bd/icon.svg" flutter/assets/icon.svg; fi
+          ls -l flutter/windows/runner/resources/app_icon.ico res/icon.ico res/tray-icon.ico
           echo "::endgroup::"
 
           echo "::group::Runner.rc (exe version resource)"
           rc=flutter/windows/runner/Runner.rc
-          sed -i 's#VALUE "CompanyName", "[^"]*"#VALUE "CompanyName", "NexaFlow"#' "$rc"
-          sed -i 's#VALUE "FileDescription", "[^"]*"#VALUE "FileDescription", "NexaFlow Suporte - Acesso Remoto"#' "$rc"
-          sed -i 's#VALUE "InternalName", "[^"]*"#VALUE "InternalName", "NexaFlow Suporte"#' "$rc"
-          sed -i 's#VALUE "LegalCopyright", "[^"]*"#VALUE "LegalCopyright", "Copyright (C) 2026 NexaFlow. Todos os direitos reservados."#' "$rc"
-          sed -i 's#VALUE "OriginalFilename", "[^"]*"#VALUE "OriginalFilename", "NexaFlow-Suporte.exe"#' "$rc"
-          sed -i 's#VALUE "ProductName", "[^"]*"#VALUE "ProductName", "NexaFlow Suporte"#' "$rc"
+          sed -i "s#VALUE \"CompanyName\", \"[^\"]*\"#VALUE \"CompanyName\", \"${COMPANY}\"#" "$rc"
+          sed -i "s#VALUE \"FileDescription\", \"[^\"]*\"#VALUE \"FileDescription\", \"${DESC}\"#" "$rc"
+          sed -i "s#VALUE \"InternalName\", \"[^\"]*\"#VALUE \"InternalName\", \"${PRODUCT}\"#" "$rc"
+          sed -i "s#VALUE \"LegalCopyright\", \"[^\"]*\"#VALUE \"LegalCopyright\", \"${COPYRIGHT}\"#" "$rc"
+          sed -i "s#VALUE \"OriginalFilename\", \"[^\"]*\"#VALUE \"OriginalFilename\", \"${EXE}\"#" "$rc"
+          sed -i "s#VALUE \"ProductName\", \"[^\"]*\"#VALUE \"ProductName\", \"${PRODUCT}\"#" "$rc"
           grep -n 'VALUE "' "$rc"
           echo "::endgroup::"
 
           echo "::group::Cargo.toml winres"
-          sed -i 's#^ProductName = ".*"#ProductName = "NexaFlow Suporte"#' Cargo.toml
-          sed -i 's#^FileDescription = ".*"#FileDescription = "NexaFlow Suporte - Acesso Remoto"#' Cargo.toml
-          sed -i 's#^OriginalFilename = ".*"#OriginalFilename = "NexaFlow-Suporte.exe"#' Cargo.toml
-          sed -i 's#^LegalCopyright = ".*"#LegalCopyright = "Copyright (C) 2026 NexaFlow."#' Cargo.toml
+          sed -i "s#^ProductName = \".*\"#ProductName = \"${PRODUCT}\"#" Cargo.toml
+          sed -i "s#^FileDescription = \".*\"#FileDescription = \"${DESC}\"#" Cargo.toml
+          sed -i "s#^OriginalFilename = \".*\"#OriginalFilename = \"${EXE}\"#" Cargo.toml
+          sed -i "s#^LegalCopyright = \".*\"#LegalCopyright = \"${COPYRIGHT}\"#" Cargo.toml
           sed -n '/\[package.metadata.winres\]/,+4p' Cargo.toml
           echo "::endgroup::"
 
           echo "::group::hbb_common config.rs (APP_NAME + server + key)"
           cfg=libs/hbb_common/src/config.rs
           test -f "$cfg" || { echo "config.rs missing - submodule not checked out"; exit 1; }
-          sed -i 's#RwLock::new("RustDesk".to_owned())#RwLock::new("NexaFlow".to_owned())#' "$cfg"
+          sed -i "s#RwLock::new(\"RustDesk\".to_owned())#RwLock::new(\"${APP_NAME}\".to_owned())#" "$cfg"
           sed -i "s#pub const RENDEZVOUS_SERVERS: &\[&str\] = &\[\"rs-ny.rustdesk.com\"\];#pub const RENDEZVOUS_SERVERS: \&[\&str] = \&[\"${RENDEZVOUS_SERVER}\"];#" "$cfg"
           sed -i "s#pub const RS_PUB_KEY: &str = \"OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=\";#pub const RS_PUB_KEY: \&str = \"${RS_PUB_KEY}\";#" "$cfg"
           grep -n 'APP_NAME: RwLock\|pub const RENDEZVOUS_SERVERS:\|pub const RS_PUB_KEY:' "$cfg"
           echo "::endgroup::"
 
-          echo "::group::Verify patches applied"
+          echo "::group::Verify"
           fail=0
-          grep -q 'RwLock::new("NexaFlow".to_owned())' "$cfg" || { echo "APP_NAME not patched"; fail=1; }
+          grep -q "RwLock::new(\"${APP_NAME}\".to_owned())" "$cfg" || { echo "APP_NAME not patched"; fail=1; }
           if grep -q 'rs-ny.rustdesk.com' "$cfg"; then echo "server still default"; fail=1; fi
           if grep -q 'OeVuKk5nlHiXp' "$cfg"; then echo "pub key still default"; fail=1; fi
-          grep -Eq 'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\["[^"]+"\];' "$cfg" || { echo "server empty/malformed (is the RENDEZVOUS_SERVER secret set?)"; fail=1; }
-          grep -Eq 'pub const RS_PUB_KEY: &str = "[^"]+";' "$cfg" || { echo "pub key empty/malformed (is the RS_PUB_KEY secret set?)"; fail=1; }
-          test "$fail" = "0" || { echo "Branding/embed verification failed"; exit 1; }
-          echo "All NexaFlow patches verified."
+          grep -Eq 'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\["[^"]+"\];' "$cfg" || { echo "server empty (is RENDEZVOUS_SERVER set?)"; fail=1; }
+          grep -Eq 'pub const RS_PUB_KEY: &str = "[^"]+";' "$cfg" || { echo "pub key empty (is RS_PUB_KEY set?)"; fail=1; }
+          test "$fail" = "0" || { echo "verification failed"; exit 1; }
+          echo "All patches verified for $BRAND."
           echo "::endgroup::"
 
       - name: Restore bridge files
@@ -260,19 +290,17 @@ jobs:
           head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-x64-windows-static-rel-out.log" || true
         shell: bash
 
-      - name: Build rustdesk
+      - name: Build client
         run: |
           python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
           mv ./flutter/build/windows/x64/runner/Release ./rustdesk
 
-          # Download usbmmidd_v2.zip and extract it to ./rustdesk
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
           Expand-Archive usbmmidd_v2.zip -DestinationPath .
           Remove-Item -Path usbmmidd_v2\Win32 -Recurse
           Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat"
           mv -Force .\usbmmidd_v2 ./rustdesk
 
-          # Download printer driver files and extract them to ./rustdesk
           try {
             Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip -OutFile rustdesk_printer_driver_v4-1.4.zip
             Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip -OutFile printer_driver_adapter.zip
@@ -283,19 +311,17 @@ jobs:
             $checksum_adapter = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*printer_driver_adapter\.zip$').Matches.Groups[1].Value
             $downloadsum_adapter = Get-FileHash -Path printer_driver_adapter.zip -Algorithm SHA256
             if ($checksum_driver -eq $downloadsum_driver.Hash -and $checksum_adapter -eq $downloadsum_adapter.Hash) {
-                Write-Output "rustdesk_printer_driver_v4-1.4, checksums match, extract the file."
+                Write-Output "printer driver checksums match, extract."
                 Expand-Archive rustdesk_printer_driver_v4-1.4.zip -DestinationPath .
                 mkdir ./rustdesk/drivers
                 mv -Force .\rustdesk_printer_driver_v4-1.4 ./rustdesk/drivers/RustDeskPrinterDriver
                 Expand-Archive printer_driver_adapter.zip -DestinationPath .
                 mv -Force .\printer_driver_adapter.dll ./rustdesk
-            } elseif ($checksum_driver -ne $downloadsum_driver.Hash) {
-                Write-Output "rustdesk_printer_driver_v4-1.4, checksums do not match, ignore the file."
             } else {
-                Write-Output "printer_driver_adapter.dll, checksums do not match, ignore the file."
+                Write-Output "printer driver checksums mismatch, ignore."
             }
           } catch {
-              Write-Host "Ingore the printer driver error."
+              Write-Host "Ignore the printer driver error."
           }
 
       - name: Download RustDeskTempTopMostWindow artifacts
@@ -305,9 +331,9 @@ jobs:
           name: topmostwindow-artifacts-x64
           path: "./rustdesk"
 
-      - name: Upload NexaFlow unsigned Windows client
+      - name: Upload unsigned client folder
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rustdesk-unsigned-windows-x86_64
+          name: client-unsigned-windows-x86_64-${{ inputs.brand }}
           path: rustdesk
           if-no-files-found: error

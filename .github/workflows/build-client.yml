@@ -205,9 +205,18 @@ jobs:
           grep -n 'APP_NAME: RwLock\|pub const RENDEZVOUS_SERVERS:\|pub const RS_PUB_KEY:' "$cfg"
           echo "::endgroup::"
 
+          echo "::group::Baked display name (name the controlled side sees)"
+          # create_login_msg falls back to crate::username() (the OS user) when no
+          # builtin/API display name is set; bake the brand name there instead.
+          sed -i "s#display_name = crate::username();#display_name = \"${PRODUCT}\".to_owned();#" src/client.rs
+          grep -n 'display_name = ' src/client.rs | head
+          echo "::endgroup::"
+
           echo "::group::Verify"
           fail=0
           grep -q "RwLock::new(\"${APP_NAME}\".to_owned())" "$cfg" || { echo "APP_NAME not patched"; fail=1; }
+          grep -q "display_name = \"${PRODUCT}\".to_owned();" src/client.rs || { echo "display name not patched"; fail=1; }
+          if grep -q 'display_name = crate::username();' src/client.rs; then echo "display name still OS username"; fail=1; fi
           if grep -q 'rs-ny.rustdesk.com' "$cfg"; then echo "server still default"; fail=1; fi
           if grep -q 'OeVuKk5nlHiXp' "$cfg"; then echo "pub key still default"; fail=1; fi
           grep -Eq 'pub const RENDEZVOUS_SERVERS: &\[&str\] = &\["[^"]+"\];' "$cfg" || { echo "server empty (is RENDEZVOUS_SERVER set?)"; fail=1; }
